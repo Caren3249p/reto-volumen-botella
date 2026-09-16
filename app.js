@@ -38,18 +38,16 @@ function snapToRealEdge(xClick, yClick) {
     let startX = Math.max(0, Math.floor(xClick - searchRange));
     let width = searchRange * 2;
     
-    // Extraer datos de píxeles en la fila seleccionada
     let imgData;
     try {
         imgData = ctx.getImageData(startX, Math.floor(yClick), width, 1).data;
     } catch (e) {
-        return xClick; // Retorno de seguridad si falla el acceso
+        return xClick; // Retorno de seguridad
     }
 
     let maxGradient = 0;
     let bestX = xClick;
 
-    // Analizar el cambio brusco de color (contraste)
     for (let i = 0; i < imgData.length - 8; i += 4) {
         let brightnessCurrent = (imgData[i] + imgData[i + 1] + imgData[i + 2]) / 3;
         let brightnessNext = (imgData[i + 4] + imgData[i + 5] + imgData[i + 6]) / 3;
@@ -62,8 +60,60 @@ function snapToRealEdge(xClick, yClick) {
         }
     }
 
-    // Si el contraste es claro, engancha al borde; de lo contrario mantiene el clic original
     return maxGradient > 15 ? bestX : xClick;
+}
+
+// -------------------------------------------------------------
+// BÚSQUEDA DE RAÍCES: MÉTODO DE LA SECANTE
+// Resuelve f(h) = V(h) - V_objetivo = 0
+// -------------------------------------------------------------
+
+function calcularVolumenHastaAltura(hEval, maxRadiusCm, realHeightCm) {
+    const n = 12;
+    const dz = hEval / n;
+    let vParcial = 0;
+
+    for (let i = 0; i < n; i++) {
+        let z0 = i * dz;
+        let z1 = (i + 1) * dz;
+        
+        let p0 = z0 / realHeightCm;
+        let p1 = z1 / realHeightCm;
+
+        let r0 = p0 > 0.80 ? maxRadiusCm * (1 - ((p0 - 0.80) / 0.20) * 0.25) : maxRadiusCm;
+        let r1 = p1 > 0.80 ? maxRadiusCm * (1 - ((p1 - 0.80) / 0.20) * 0.25) : maxRadiusCm;
+
+        let radioCuadradoPromedio = (elevarAlCuadrado(r0) + elevarAlCuadrado(r1)) / 2;
+        vParcial += PI_MANUAL * radioCuadradoPromedio * dz;
+    }
+    return vParcial;
+}
+
+function metodoSecante(vObjetivo, maxRadiusCm, realHeightCm) {
+    let h0 = realHeightCm * 0.4;
+    let h1 = realHeightCm * 0.9;
+    let tol = 0.001;
+    let maxIter = 50;
+    let iter = 0;
+    let hNext = h1;
+
+    while (iter < maxIter) {
+        let f_h0 = calcularVolumenHastaAltura(h0, maxRadiusCm, realHeightCm) - vObjetivo;
+        let f_h1 = calcularVolumenHastaAltura(h1, maxRadiusCm, realHeightCm) - vObjetivo;
+
+        if (valorAbsoluto(f_h1 - f_h0) < 1e-7) break;
+
+        // Fórmula de la Secante
+        hNext = h1 - (f_h1 * (h1 - h0)) / (f_h1 - f_h0);
+
+        if (valorAbsoluto(f_h1) < tol) break;
+
+        h0 = h1;
+        h1 = hNext;
+        iter++;
+    }
+
+    return { alturaLlenadoCm: hNext, iteraciones: iter };
 }
 
 // -------------------------------------------------------------
@@ -119,7 +169,6 @@ canvas.addEventListener('click', (e) => {
     let x = (e.clientX - rect.left) * scaleX;
     let y = (e.clientY - rect.top) * scaleY;
 
-    // Aplicar ajuste magnético para el punto del Borde Máximo
     if (calibrationPoints.length === 2) {
         x = snapToRealEdge(x, y);
     }
@@ -173,7 +222,7 @@ btnReset.addEventListener('click', () => {
 });
 
 // -------------------------------------------------------------
-// MOTOR DE INTEGRACIÓN NUMÉRICA UNIVERSAL
+// MOTOR DE CÁLCULO NUMÉRICO
 // -------------------------------------------------------------
 
 btnCalculate.addEventListener('click', () => {
@@ -191,7 +240,7 @@ btnCalculate.addEventListener('click', () => {
     const centerXPixel = (topPt.x + bottomPt.x) / 2;
     const maxRadiusCm = valorAbsoluto(maxRadiusPt.x - centerXPixel) * cmPerPixel;
 
-    // Discretización universal en n=12 nodos
+    // 1. Integración por Regla del Trapecio
     const n = 12;
     const dz = realHeightCm / n;
     let dataset = [];
@@ -201,7 +250,6 @@ btnCalculate.addEventListener('click', () => {
         let porcentajeAltura = z_i / realHeightCm;
         let r_i = maxRadiusCm;
 
-        // Modelado estándar de contracción hacia el cuello
         if (porcentajeAltura > 0.80) {
             let factorCuello = 1 - ((porcentajeAltura - 0.80) / 0.20) * 0.25;
             r_i = maxRadiusCm * factorCuello;
@@ -210,7 +258,6 @@ btnCalculate.addEventListener('click', () => {
         dataset[dataset.length] = { z: z_i, r: r_i };
     }
 
-    // Integración por Regla del Trapecio
     let volumeCm3 = 0;
     for (let i = 0; i < dataset.length - 1; i++) {
         let z0 = dataset[i].z;
@@ -225,9 +272,19 @@ btnCalculate.addEventListener('click', () => {
         volumeCm3 += volumenSegmento;
     }
 
+    // 2. Búsqueda de Raíces por Método de la Secante
+    const vObjetivo = 250.0; // Volumen nominal objetivo (mL)
+    const secanteRes = metodoSecante(vObjetivo, maxRadiusCm, realHeightCm);
+
     // Renderizar Resultados
     document.getElementById('volResult').textContent = volumeCm3.toFixed(2);
     document.getElementById('pointsCount').textContent = dataset.length;
+
+    // Si agregas estos elementos opcionales en el HTML, mostrarán la Secante:
+    const secanteEl = document.getElementById('secanteResult');
+    if (secanteEl) {
+        secanteEl.textContent = `Altura para ${vObjetivo} mL: ${secanteRes.alturaLlenadoCm.toFixed(2)} cm (Iteraciones: ${secanteRes.iteraciones})`;
+    }
 
     const tbody = document.querySelector('#datasetTable tbody');
     tbody.innerHTML = '';
