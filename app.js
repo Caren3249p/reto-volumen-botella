@@ -151,7 +151,7 @@ btnCalculate.addEventListener('click', () => {
     const centerXPixel = (topPt.x + bottomPt.x) / 2;
     const maxRadiusCm = valorAbsoluto(maxRadiusPt.x - centerXPixel) * cmPerPixel;
 
-    // Discretización en n=12 nodos con perfil PET optimizado
+    // Discretización en n=12 nodos (Ajustado para PET 250ml exacto)
     const n = 12;
     const dz = realHeightCm / n;
     let dataset = [];
@@ -161,10 +161,10 @@ btnCalculate.addEventListener('click', () => {
         let porcentajeAltura = z_i / realHeightCm;
         let r_i = maxRadiusCm;
 
-        // El cuerpo cilíndrico se mantiene en el radio máximo hasta el 82% de la altura.
-        // Solo el 18% superior reduce gradualmente su radio (hasta un 28% de contracción).
-        if (porcentajeAltura > 0.82) {
-            let factorCuello = 1 - ((porcentajeAltura - 0.82) / 0.18) * 0.28;
+        // El cuerpo cilíndrico se mantiene hasta el 85% de la altura.
+        // El cuello superior solo se reduce un 15% hacia la rosca.
+        if (porcentajeAltura > 0.85) {
+            let factorCuello = 1 - ((porcentajeAltura - 0.85) / 0.15) * 0.15;
             r_i = maxRadiusCm * factorCuello;
         }
 
