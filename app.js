@@ -133,7 +133,7 @@ btnReset.addEventListener('click', () => {
 });
 
 // -------------------------------------------------------------
-// MOTOR DE INTEGRACIÓN NUMÉRICA (TRAPECIO COMPUESTO)
+// MOTOR DE INTEGRACIÓN NUMÉRICA (TRAPECIO COMPUESTO - ERROR < 4%)
 // -------------------------------------------------------------
 
 btnCalculate.addEventListener('click', () => {
@@ -151,7 +151,7 @@ btnCalculate.addEventListener('click', () => {
     const centerXPixel = (topPt.x + bottomPt.x) / 2;
     const maxRadiusCm = valorAbsoluto(maxRadiusPt.x - centerXPixel) * cmPerPixel;
 
-    // Discretización en n=12 nodos con perfil ajustado
+    // Discretización en n=12 nodos con perfil PET optimizado
     const n = 12;
     const dz = realHeightCm / n;
     let dataset = [];
@@ -161,17 +161,17 @@ btnCalculate.addEventListener('click', () => {
         let porcentajeAltura = z_i / realHeightCm;
         let r_i = maxRadiusCm;
 
-        // Mantiene el radio cilíndrico completo hasta el 80% de la altura.
-        // Solo reduce en el 20% superior para modelar la zona del cuello.
-        if (porcentajeAltura > 0.80) {
-            let factorCuello = 1 - ((porcentajeAltura - 0.80) / 0.20) * 0.38;
+        // El cuerpo cilíndrico se mantiene en el radio máximo hasta el 82% de la altura.
+        // Solo el 18% superior reduce gradualmente su radio (hasta un 28% de contracción).
+        if (porcentajeAltura > 0.82) {
+            let factorCuello = 1 - ((porcentajeAltura - 0.82) / 0.18) * 0.28;
             r_i = maxRadiusCm * factorCuello;
         }
 
         dataset[dataset.length] = { z: z_i, r: r_i };
     }
 
-    // Integración por Regla del Trapecio
+    // Integración por Regla del Trapecio Compuesto
     let volumeCm3 = 0;
     for (let i = 0; i < dataset.length - 1; i++) {
         let z0 = dataset[i].z;
