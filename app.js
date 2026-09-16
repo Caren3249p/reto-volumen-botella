@@ -151,7 +151,7 @@ btnCalculate.addEventListener('click', () => {
     const centerXPixel = (topPt.x + bottomPt.x) / 2;
     const maxRadiusCm = valorAbsoluto(maxRadiusPt.x - centerXPixel) * cmPerPixel;
 
-    // Discretización en n=12 nodos
+    // Discretización en n=12 nodos con perfil ajustado
     const n = 12;
     const dz = realHeightCm / n;
     let dataset = [];
@@ -161,9 +161,10 @@ btnCalculate.addEventListener('click', () => {
         let porcentajeAltura = z_i / realHeightCm;
         let r_i = maxRadiusCm;
 
-        // Modelado de estrechamiento hacia la tapa (cuello de botella)
-        if (porcentajeAltura > 0.65) {
-            let factorCuello = 1 - ((porcentajeAltura - 0.65) / 0.35) * 0.55;
+        // Mantiene el radio cilíndrico completo hasta el 80% de la altura.
+        // Solo reduce en el 20% superior para modelar la zona del cuello.
+        if (porcentajeAltura > 0.80) {
+            let factorCuello = 1 - ((porcentajeAltura - 0.80) / 0.20) * 0.38;
             r_i = maxRadiusCm * factorCuello;
         }
 
