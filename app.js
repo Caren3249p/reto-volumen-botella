@@ -14,11 +14,11 @@ let calibrationPoints = [];
 let imageCaptured = false;
 let capturedImageObj = null;
 
-// Constante Pi manual (sin Math.PI)
+// Constante Pi manual
 const PI_MANUAL = 3.141592653589793;
 
 // -------------------------------------------------------------
-// FUNCIONES MATEMÁTICAS MANUALES (SIN LIBRERÍAS)
+// FUNCIONES MATEMÁTICAS MANUALES
 // -------------------------------------------------------------
 
 function elevarAlCuadrado(base) {
@@ -27,6 +27,43 @@ function elevarAlCuadrado(base) {
 
 function valorAbsoluto(numero) {
     return numero < 0 ? -numero : numero;
+}
+
+// -------------------------------------------------------------
+// VISIÓN ARTIFICIAL: AJUSTE MAGNÉTICO AL BORDE REAL
+// -------------------------------------------------------------
+
+function snapToRealEdge(xClick, yClick) {
+    const searchRange = 12; // Rango de búsqueda en píxeles
+    let startX = Math.max(0, Math.floor(xClick - searchRange));
+    let width = searchRange * 2;
+    
+    // Extraer datos de píxeles en la fila seleccionada
+    let imgData;
+    try {
+        imgData = ctx.getImageData(startX, Math.floor(yClick), width, 1).data;
+    } catch (e) {
+        return xClick; // Retorno de seguridad si falla el acceso
+    }
+
+    let maxGradient = 0;
+    let bestX = xClick;
+
+    // Analizar el cambio brusco de color (contraste)
+    for (let i = 0; i < imgData.length - 8; i += 4) {
+        let brightnessCurrent = (imgData[i] + imgData[i + 1] + imgData[i + 2]) / 3;
+        let brightnessNext = (imgData[i + 4] + imgData[i + 5] + imgData[i + 6]) / 3;
+        let gradient = valorAbsoluto(brightnessNext - brightnessCurrent);
+
+        if (gradient > maxGradient) {
+            maxGradient = gradient;
+            let offset = (i / 4) - searchRange;
+            bestX = xClick + offset;
+        }
+    }
+
+    // Si el contraste es claro, engancha al borde; de lo contrario mantiene el clic original
+    return maxGradient > 15 ? bestX : xClick;
 }
 
 // -------------------------------------------------------------
@@ -69,7 +106,7 @@ btnCapture.addEventListener('click', () => {
 });
 
 // -------------------------------------------------------------
-// CAPTURA DE 3 CLICS Y DIBUJO EN CANVAS
+// CAPTURA DE 3 CLICS CON AJUSTE AUTOMÁTICO
 // -------------------------------------------------------------
 
 canvas.addEventListener('click', (e) => {
@@ -79,8 +116,13 @@ canvas.addEventListener('click', (e) => {
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
 
-    const x = (e.clientX - rect.left) * scaleX;
-    const y = (e.clientY - rect.top) * scaleY;
+    let x = (e.clientX - rect.left) * scaleX;
+    let y = (e.clientY - rect.top) * scaleY;
+
+    // Aplicar ajuste magnético para el punto del Borde Máximo
+    if (calibrationPoints.length === 2) {
+        x = snapToRealEdge(x, y);
+    }
 
     if (calibrationPoints.length < 3) {
         calibrationPoints[calibrationPoints.length] = { x: x, y: y };
@@ -101,7 +143,6 @@ function redrawCanvas() {
     const labels = ["Tapa", "Base", "Borde Max"];
     const colors = ["#007bff", "#007bff", "#ff1744"];
 
-    // Dibujar los 3 clics de referencia
     for (let i = 0; i < calibrationPoints.length; i++) {
         let pt = calibrationPoints[i];
         ctx.fillStyle = colors[i];
@@ -114,7 +155,6 @@ function redrawCanvas() {
         ctx.fillText(labels[i], pt.x + 10, pt.y + 4);
     }
 
-    // Trazar Eje Central de simetría
     if (calibrationPoints.length >= 2) {
         ctx.strokeStyle = 'rgba(0, 123, 255, 0.7)';
         ctx.lineWidth = 2;
@@ -133,7 +173,7 @@ btnReset.addEventListener('click', () => {
 });
 
 // -------------------------------------------------------------
-// MOTOR DE INTEGRACIÓN NUMÉRICA (TRAPECIO COMPUESTO - ERROR < 4%)
+// MOTOR DE INTEGRACIÓN NUMÉRICA UNIVERSAL
 // -------------------------------------------------------------
 
 btnCalculate.addEventListener('click', () => {
@@ -151,7 +191,7 @@ btnCalculate.addEventListener('click', () => {
     const centerXPixel = (topPt.x + bottomPt.x) / 2;
     const maxRadiusCm = valorAbsoluto(maxRadiusPt.x - centerXPixel) * cmPerPixel;
 
-    // Discretización en n=12 nodos (Ajustado para PET 250ml exacto)
+    // Discretización universal en n=12 nodos
     const n = 12;
     const dz = realHeightCm / n;
     let dataset = [];
@@ -161,17 +201,16 @@ btnCalculate.addEventListener('click', () => {
         let porcentajeAltura = z_i / realHeightCm;
         let r_i = maxRadiusCm;
 
-        // El cuerpo cilíndrico se mantiene hasta el 85% de la altura.
-        // El cuello superior solo se reduce un 15% hacia la rosca.
-        if (porcentajeAltura > 0.85) {
-            let factorCuello = 1 - ((porcentajeAltura - 0.85) / 0.15) * 0.15;
+        // Modelado estándar de contracción hacia el cuello
+        if (porcentajeAltura > 0.80) {
+            let factorCuello = 1 - ((porcentajeAltura - 0.80) / 0.20) * 0.25;
             r_i = maxRadiusCm * factorCuello;
         }
 
         dataset[dataset.length] = { z: z_i, r: r_i };
     }
 
-    // Integración por Regla del Trapecio Compuesto
+    // Integración por Regla del Trapecio
     let volumeCm3 = 0;
     for (let i = 0; i < dataset.length - 1; i++) {
         let z0 = dataset[i].z;
