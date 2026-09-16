@@ -1,91 +1,5 @@
-// Referencias al DOM
-const video = document.getElementById('video');
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
-
-const btnStartCamera = document.getElementById('btnStartCamera');
-const btnCapture = document.getElementById('btnCapture');
-const btnReset = document.getElementById('btnReset');
-const btnCalculate = document.getElementById('btnCalculate');
-const realHeightInput = document.getElementById('realHeight');
-
-let stream = null;
-let points = [];
-let imageCaptured = false;
-let capturedImageObj = null;
-
-// Constante Pi manual (sin Math.PI)
-const PI_MANUAL = 3.141592653589793;
-
-// -------------------------------------------------------------
-// FUNCIONES MATEMÁTICAS Y ALGORITMOS DESDE CERO (SIN LIBRERÍAS)
-// -------------------------------------------------------------
-
-// Elevación al cuadrado manual (reemplaza a Math.pow(x, 2))
-function elevarAlCuadrado(base) {
-    return base * base;
-}
-
-// Valor absoluto manual (reemplaza a Math.abs)
-function valorAbsoluto(numero) {
-    return numero < 0 ? -numero : numero;
-}
-
-// Algoritmo de Ordenamiento Burbuja / Bubble Sort (reemplaza a .sort())
-// Ordena el arreglo de puntos de menor a mayor altura z
-function ordenarPuntosPorZ(arreglo) {
-    let n = arreglo.length;
-    for (let i = 0; i < n - 1; i++) {
-        for (let j = 0; j < n - i - 1; j++) {
-            if (arreglo[j].z > arreglo[j + 1].z) {
-                // Intercambio (Swap)
-                let temp = arreglo[j];
-                arreglo[j] = arreglo[j + 1];
-                arreglo[j + 1] = temp;
-            }
-        }
-    }
-    return arreglo;
-}
-
-// -------------------------------------------------------------
-// EVENTOS Y LÓGICA DE INTERFAZ
-// -------------------------------------------------------------
-
-btnStartCamera.addEventListener('click', async () => {
-    try {
-        stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: 'environment' } 
-        });
-        video.srcObject = stream;
-        video.style.display = 'block';
-        canvas.style.display = 'none';
-        btnCapture.disabled = false;
-    } catch (err) {
-        alert('Error al acceder a la cámara: ' + err.message);
-    }
-});
-
-btnCapture.addEventListener('click', () => {
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 480;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    
-    if (stream) {
-        let tracks = stream.getTracks();
-        for (let i = 0; i < tracks.length; i++) {
-            tracks[i].stop();
-        }
-    }
-    
-    video.style.display = 'none';
-    canvas.style.display = 'block';
-    btnCapture.disabled = true;
-    imageCaptured = true;
-    
-    capturedImageObj = new Image();
-    capturedImageObj.src = canvas.toDataURL('image/png');
-});
+// Variable para guardar los puntos de calibración
+let calibrationPoints = [];
 
 canvas.addEventListener('click', (e) => {
     if (!imageCaptured) return;
@@ -97,7 +11,18 @@ canvas.addEventListener('click', (e) => {
     const x = (e.clientX - rect.left) * scaleX;
     const y = (e.clientY - rect.top) * scaleY;
 
-    // Agregar punto manualmente
+    // Clic 1: Tapa (Punto superior)
+    // Clic 2: Base (Punto inferior)
+    if (calibrationPoints.length < 2) {
+        calibrationPoints[calibrationPoints.length] = { x: x, y: y };
+        redrawCanvas();
+        if (calibrationPoints.length === 2) {
+            alert("¡Calibración lista! Ahora marca los puntos a lo largo del borde lateral derecho.");
+        }
+        return;
+    }
+
+    // A partir del Clic 3: Puntos del perfil lateral
     points[points.length] = { x: x, y: y };
     redrawCanvas();
 
@@ -112,69 +37,87 @@ function redrawCanvas() {
         ctx.drawImage(capturedImageObj, 0, 0);
     }
 
-    ctx.fillStyle = 'red';
-    ctx.strokeStyle = 'cyan';
-    ctx.lineWidth = 2;
-
-    for (let i = 0; i < points.length; i++) {
-        let pt = points[i];
+    // 1. Dibujar Puntos de Calibración (Azules) y Eje Central
+    for (let i = 0; i < calibrationPoints.length; i++) {
+        let pt = calibrationPoints[i];
+        ctx.fillStyle = '#007bff';
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 5, 0, 2 * PI_MANUAL);
+        ctx.arc(pt.x, pt.y, 7, 0, 2 * PI_MANUAL);
         ctx.fill();
+    }
 
-        if (i === 0) {
-            ctx.moveTo(pt.x, pt.y);
-        } else {
-            ctx.lineTo(pt.x, pt.y);
-            ctx.stroke();
+    // Si existen los 2 puntos de calibración, trazar la línea central de referencia
+    if (calibrationPoints.length === 2) {
+        ctx.strokeStyle = 'rgba(0, 123, 255, 0.5)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(calibrationPoints[0].x, calibrationPoints[0].y);
+        ctx.lineTo(calibrationPoints[1].x, calibrationPoints[1].y);
+        ctx.stroke();
+    }
+
+    // 2. Dibujar Puntos del Contorno (Rojos) y la curva trazada (Cian)
+    if (points.length > 0) {
+        ctx.strokeStyle = 'cyan';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        
+        for (let i = 0; i < points.length; i++) {
+            let pt = points[i];
+            if (i === 0) {
+                ctx.moveTo(pt.x, pt.y);
+            } else {
+                ctx.lineTo(pt.x, pt.y);
+            }
+        }
+        ctx.stroke();
+
+        ctx.fillStyle = 'red';
+        for (let i = 0; i < points.length; i++) {
+            let pt = points[i];
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, 5, 0, 2 * PI_MANUAL);
+            ctx.fill();
         }
     }
 }
 
+// Reiniciar ambos arreglos de puntos
 btnReset.addEventListener('click', () => {
     points = [];
+    calibrationPoints = [];
     btnCalculate.disabled = true;
     document.getElementById('resultsCard').style.display = 'none';
     redrawCanvas();
 });
 
-// -------------------------------------------------------------
-// MOTOR DE INTEGRACIÓN NUMÉRICA PROPIO
-// -------------------------------------------------------------
-
 btnCalculate.addEventListener('click', () => {
-    if (points.length < 2) return;
+    if (points.length < 2 || calibrationPoints.length < 2) return;
 
     const realHeightCm = parseFloat(realHeightInput.value);
 
-    // 1. Encontrar Y mínima y Y máxima manualmente (sin Math.min / Math.max)
-    let minYPixel = points[0].y;
-    let maxYPixel = points[0].y;
-    let minXPixel = points[0].x;
+    // 1. Calibración exacta de altura axial
+    const topPixelY = calibrationPoints[0].y;
+    const bottomPixelY = calibrationPoints[1].y;
+    const pixelHeight = valorAbsoluto(bottomPixelY - topPixelY);
 
-    for (let i = 1; i < points.length; i++) {
-        if (points[i].y < minYPixel) minYPixel = points[i].y;
-        if (points[i].y > maxYPixel) maxYPixel = points[i].y;
-        if (points[i].x < minXPixel) minXPixel = points[i].x;
-    }
-
-    // 2. Factor de conversión píxel -> cm
-    const pixelHeight = valorAbsoluto(maxYPixel - minYPixel);
     const cmPerPixel = realHeightCm / pixelHeight;
 
-    // 3. Mapeo del Dataset a coordenadas reales (z_i, r_i)
+    // Eje central promedio entre la tapa y la base
+    const centerXPixel = (calibrationPoints[0].x + calibrationPoints[1].x) / 2;
+
+    // 2. Mapeo a coordenadas físicas (z_i, r_i)
     let dataset = [];
     for (let i = 0; i < points.length; i++) {
-        let z_i = (maxYPixel - points[i].y) * cmPerPixel;
-        let r_i = valorAbsoluto(points[i].x - minXPixel) * cmPerPixel;
+        let z_i = valorAbsoluto(bottomPixelY - points[i].y) * cmPerPixel;
+        let r_i = valorAbsoluto(points[i].x - centerXPixel) * cmPerPixel;
         dataset[dataset.length] = { z: z_i, r: r_i };
     }
 
-    // 4. Ordenamiento numérico manual del dataset por altura z (Bubble Sort)
+    // 3. Ordenamiento del dataset por nodo z_i (Bubble Sort)
     dataset = ordenarPuntosPorZ(dataset);
 
-    // 5. Integración Numérica por Trapecio Compuesto (Método de Discos)
-    // Formula: V = PI * sum( ((r_i^2 + r_{i+1}^2) / 2) * (z_{i+1} - z_i) )
+    // 4. Integración Numérica por Trapecio (Discos de revolución)
     let volumeCm3 = 0;
     for (let i = 0; i < dataset.length - 1; i++) {
         let z0 = dataset[i].z;
@@ -189,7 +132,7 @@ btnCalculate.addEventListener('click', () => {
         volumeCm3 += volumenSegmento;
     }
 
-    // Renderizar resultados en pantalla
+    // Renderizado de tabla y resultado final
     document.getElementById('volResult').textContent = volumeCm3.toFixed(2);
     document.getElementById('pointsCount').textContent = dataset.length;
     
