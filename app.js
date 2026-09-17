@@ -13,6 +13,8 @@ let stream = null;
 let calibrationPoints = [];
 let imageCaptured = false;
 let capturedImageObj = null;
+let graphDataset = [];
+let graphScale = null;
 
 // Constante Pi manual
 const PI_MANUAL = 3.141592653589793;
@@ -212,10 +214,56 @@ function redrawCanvas() {
         ctx.lineTo(calibrationPoints[1].x, calibrationPoints[1].y);
         ctx.stroke();
     }
+
+    drawDatasetGraph();
+}
+
+function drawDatasetGraph() {
+    if (graphDataset.length === 0 || !graphScale) return;
+
+    const { centerXPixel, bottomY, pixelHeight, cmPerPixel, realHeightCm } = graphScale;
+    const rightProfile = [];
+    const leftProfile = [];
+
+    for (let i = 0; i < graphDataset.length; i++) {
+        const data = graphDataset[i];
+        const y = bottomY - (data.z / realHeightCm) * pixelHeight;
+        const radiusPixels = data.r / cmPerPixel;
+
+        rightProfile[rightProfile.length] = { x: centerXPixel + radiusPixels, y: y };
+        leftProfile[leftProfile.length] = { x: centerXPixel - radiusPixels, y: y };
+    }
+
+    ctx.save();
+    ctx.strokeStyle = '#00e676';
+    ctx.fillStyle = '#00e676';
+    ctx.lineWidth = 3;
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+    ctx.shadowBlur = 4;
+
+    for (let side = 0; side < 2; side++) {
+        const profile = side === 0 ? rightProfile : leftProfile;
+        ctx.beginPath();
+        for (let i = 0; i < profile.length; i++) {
+            if (i === 0) ctx.moveTo(profile[i].x, profile[i].y);
+            else ctx.lineTo(profile[i].x, profile[i].y);
+        }
+        ctx.stroke();
+
+        for (let i = 0; i < profile.length; i++) {
+            ctx.beginPath();
+            ctx.arc(profile[i].x, profile[i].y, 4, 0, 2 * PI_MANUAL);
+            ctx.fill();
+        }
+    }
+
+    ctx.restore();
 }
 
 btnReset.addEventListener('click', () => {
     calibrationPoints = [];
+    graphDataset = [];
+    graphScale = null;
     btnCalculate.disabled = true;
     document.getElementById('resultsCard').style.display = 'none';
     redrawCanvas();
@@ -240,6 +288,14 @@ btnCalculate.addEventListener('click', () => {
     const centerXPixel = (topPt.x + bottomPt.x) / 2;
     const maxRadiusCm = valorAbsoluto(maxRadiusPt.x - centerXPixel) * cmPerPixel;
 
+    graphScale = {
+        centerXPixel: centerXPixel,
+        bottomY: bottomPt.y,
+        pixelHeight: pixelHeight,
+        cmPerPixel: cmPerPixel,
+        realHeightCm: realHeightCm
+    };
+
     // 1. Integración por Regla del Trapecio
     const n = 12;
     const dz = realHeightCm / n;
@@ -257,6 +313,9 @@ btnCalculate.addEventListener('click', () => {
 
         dataset[dataset.length] = { z: z_i, r: r_i };
     }
+
+    graphDataset = dataset;
+    redrawCanvas();
 
     let volumeCm3 = 0;
     for (let i = 0; i < dataset.length - 1; i++) {
