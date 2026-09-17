@@ -71,7 +71,7 @@ function snapToRealEdge(xClick, yClick) {
 // -------------------------------------------------------------
 
 function calcularVolumenHastaAltura(hEval, maxRadiusCm, realHeightCm) {
-    const n = 12;
+    const n = 20;
     const dz = hEval / n;
     let vParcial = 0;
 
@@ -82,13 +82,35 @@ function calcularVolumenHastaAltura(hEval, maxRadiusCm, realHeightCm) {
         let p0 = z0 / realHeightCm;
         let p1 = z1 / realHeightCm;
 
-        let r0 = p0 > 0.80 ? maxRadiusCm * (1 - ((p0 - 0.80) / 0.20) * 0.25) : maxRadiusCm;
-        let r1 = p1 > 0.80 ? maxRadiusCm * (1 - ((p1 - 0.80) / 0.20) * 0.25) : maxRadiusCm;
+        let r0 = obtenerRadioGeometrico(p0, maxRadiusCm);
+        let r1 = obtenerRadioGeometrico(p1, maxRadiusCm);
 
         let radioCuadradoPromedio = (elevarAlCuadrado(r0) + elevarAlCuadrado(r1)) / 2;
         vParcial += PI_MANUAL * radioCuadradoPromedio * dz;
     }
     return vParcial;
+}
+
+function obtenerRadioGeometrico(p, maxRadiusCm) {
+    if (p <= 0.12) {
+        // Base: curva suave de entrada desde el fondo
+        return maxRadiusCm * (0.85 + 0.15 * Math.sin((p / 0.12) * (Math.PI / 2)));
+    } 
+    else if (p > 0.12 && p <= 0.55) {
+        // Cuerpo: cintura cóncava de agarre
+        let pCuerpo = (p - 0.12) / 0.43;
+        return maxRadiusCm * (1 - 0.10 * Math.sin(pCuerpo * Math.PI));
+    } 
+    else if (p > 0.55 && p <= 0.85) {
+        // Cuello: reducción parabólica
+        let pCuello = (p - 0.55) / 0.30;
+        let factorReduccion = 0.55;
+        return maxRadiusCm * (1 - factorReduccion * Math.pow(pCuello, 1.8));
+    } 
+    else {
+        // Boquilla y Tapa
+        return maxRadiusCm * 0.45;
+    }
 }
 
 function metodoSecante(vObjetivo, maxRadiusCm, realHeightCm) {
@@ -279,7 +301,6 @@ function graficarSiluetaDesdeTabla(dataset, realHeightCm) {
         graphCanvas.style.borderRadius = '8px';
         graphCanvas.style.border = '1px solid #333';
         
-        // Insertar justo debajo de la tabla
         if (datasetTable && datasetTable.parentNode) {
             datasetTable.parentNode.insertBefore(graphCanvas, datasetTable.nextSibling);
         } else {
@@ -388,26 +409,22 @@ btnCalculate.addEventListener('click', () => {
         realHeightCm: realHeightCm
     };
 
-    // 1. Integración por Regla del Trapecio
-    const n = 12;
+    // 1. Discretización con 20 nodos y función por tramos
+    const n = 20;
     const dz = realHeightCm / n;
     let dataset = [];
 
     for (let i = 0; i <= n; i++) {
         let z_i = i * dz;
         let porcentajeAltura = z_i / realHeightCm;
-        let r_i = maxRadiusCm;
-
-        if (porcentajeAltura > 0.80) {
-            let factorCuello = 1 - ((porcentajeAltura - 0.80) / 0.20) * 0.25;
-            r_i = maxRadiusCm * factorCuello;
-        }
+        let r_i = obtenerRadioGeometrico(porcentajeAltura, maxRadiusCm);
 
         dataset[dataset.length] = { z: z_i, r: r_i };
     }
 
     graphDataset = dataset;
 
+    // 2. Integración Numérica por Regla del Trapecio
     let volumeCm3 = 0;
     for (let i = 0; i < dataset.length - 1; i++) {
         let z0 = dataset[i].z;
@@ -422,11 +439,11 @@ btnCalculate.addEventListener('click', () => {
         volumeCm3 += volumenSegmento;
     }
 
-    // 2. Búsqueda de Raíces por Método de la Secante
+    // 3. Búsqueda de Raíces por Método de la Secante
     const vObjetivo = 250.0;
     const secanteRes = metodoSecante(vObjetivo, maxRadiusCm, realHeightCm);
 
-    // 3. Renderizar Resultados en el DOM
+    // Renderizar Resultados en el DOM
     document.getElementById('volResult').textContent = volumeCm3.toFixed(2);
     document.getElementById('pointsCount').textContent = dataset.length;
 
@@ -448,10 +465,8 @@ btnCalculate.addEventListener('click', () => {
         tbody.innerHTML += row;
     }
 
-    // Mostrar el contenedor de resultados
     document.getElementById('resultsCard').style.display = 'block';
 
-    // Redibujar la foto con las líneas verdes y generar el gráfico de silueta
     redrawCanvas();
     graficarSiluetaDesdeTabla(dataset, realHeightCm);
 });
