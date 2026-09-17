@@ -260,12 +260,104 @@ function drawDatasetGraph() {
     ctx.restore();
 }
 
+// -------------------------------------------------------------
+// GRAFICAR SILUETA EN UN CANVAS DEDICADO A PARTIR DE LA TABLA
+// -------------------------------------------------------------
+
+function graficarSiluetaDesdeTabla(dataset, realHeightCm) {
+    let graphCanvas = document.getElementById('siluetaCanvas');
+    
+    // Crear canvas dinámicamente si no existe en el DOM
+    if (!graphCanvas) {
+        graphCanvas = document.createElement('canvas');
+        graphCanvas.id = 'siluetaCanvas';
+        graphCanvas.width = 320;
+        graphCanvas.height = 380;
+        graphCanvas.style.display = 'block';
+        graphCanvas.style.margin = '20px auto';
+        graphCanvas.style.background = '#181818';
+        graphCanvas.style.borderRadius = '8px';
+        graphCanvas.style.border = '1px solid #333';
+        
+        const resultsCard = document.getElementById('resultsCard');
+        resultsCard.appendChild(graphCanvas);
+    }
+
+    const gCtx = graphCanvas.getContext('2d');
+    gCtx.clearRect(0, 0, graphCanvas.width, graphCanvas.height);
+
+    const padding = 35;
+    const drawWidth = graphCanvas.width - (padding * 2);
+    const drawHeight = graphCanvas.height - (padding * 2);
+    const centerX = graphCanvas.width / 2;
+
+    // Obtener radio máximo para la escala horizontal
+    let maxR = 0;
+    for (let i = 0; i < dataset.length; i++) {
+        if (dataset[i].r > maxR) maxR = dataset[i].r;
+    }
+
+    const scaleX = (drawWidth / 2) / (maxR * 1.15);
+    const scaleY = drawHeight / realHeightCm;
+
+    // Eje de simetría axial
+    gCtx.strokeStyle = '#555';
+    gCtx.setLineDash([4, 4]);
+    gCtx.beginPath();
+    gCtx.moveTo(centerX, padding / 2);
+    gCtx.lineTo(centerX, graphCanvas.height - (padding / 2));
+    gCtx.stroke();
+    gCtx.setLineDash([]);
+
+    // 1. Trazar silueta rellena conectando los puntos (z_i, r_i)
+    gCtx.beginPath();
+    
+    // Perfil Derecho (Desde la base z=0 hasta la tapa)
+    for (let i = 0; i < dataset.length; i++) {
+        let x = centerX + (dataset[i].r * scaleX);
+        let y = (graphCanvas.height - padding) - (dataset[i].z * scaleY);
+        if (i === 0) gCtx.moveTo(x, y);
+        else gCtx.lineTo(x, y);
+    }
+    
+    // Perfil Izquierdo (Desde la tapa de regreso a la base)
+    for (let i = dataset.length - 1; i >= 0; i--) {
+        let x = centerX - (dataset[i].r * scaleX);
+        let y = (graphCanvas.height - padding) - (dataset[i].z * scaleY);
+        gCtx.lineTo(x, y);
+    }
+    
+    gCtx.closePath();
+    gCtx.fillStyle = 'rgba(0, 230, 118, 0.15)';
+    gCtx.fill();
+    gCtx.strokeStyle = '#00e676';
+    gCtx.lineWidth = 2;
+    gCtx.stroke();
+
+    // 2. Dibujar nodos de discretización sobre la silueta
+    gCtx.fillStyle = '#ff1744';
+    for (let i = 0; i < dataset.length; i++) {
+        let y = (graphCanvas.height - padding) - (dataset[i].z * scaleY);
+        let xRight = centerX + (dataset[i].r * scaleX);
+        let xLeft = centerX - (dataset[i].r * scaleX);
+
+        gCtx.beginPath();
+        gCtx.arc(xRight, y, 3, 0, 2 * PI_MANUAL);
+        gCtx.arc(xLeft, y, 3, 0, 2 * PI_MANUAL);
+        gCtx.fill();
+    }
+}
+
 btnReset.addEventListener('click', () => {
     calibrationPoints = [];
     graphDataset = [];
     graphScale = null;
     btnCalculate.disabled = true;
     document.getElementById('resultsCard').style.display = 'none';
+    
+    const siluetaCanvas = document.getElementById('siluetaCanvas');
+    if (siluetaCanvas) siluetaCanvas.remove();
+    
     redrawCanvas();
 });
 
@@ -332,14 +424,13 @@ btnCalculate.addEventListener('click', () => {
     }
 
     // 2. Búsqueda de Raíces por Método de la Secante
-    const vObjetivo = 250.0; // Volumen nominal objetivo (mL)
+    const vObjetivo = 250.0;
     const secanteRes = metodoSecante(vObjetivo, maxRadiusCm, realHeightCm);
 
     // Renderizar Resultados
     document.getElementById('volResult').textContent = volumeCm3.toFixed(2);
     document.getElementById('pointsCount').textContent = dataset.length;
 
-    // Si agregas estos elementos opcionales en el HTML, mostrarán la Secante:
     const secanteEl = document.getElementById('secanteResult');
     if (secanteEl) {
         secanteEl.textContent = `Altura para ${vObjetivo} mL: ${secanteRes.alturaLlenadoCm.toFixed(2)} cm (Iteraciones: ${secanteRes.iteraciones})`;
@@ -358,4 +449,7 @@ btnCalculate.addEventListener('click', () => {
     }
 
     document.getElementById('resultsCard').style.display = 'block';
+
+    // Generar la gráfica de la silueta simétrica con el dataset obtenido
+    graficarSiluetaDesdeTabla(dataset, realHeightCm);
 });
