@@ -266,53 +266,54 @@ function drawDatasetGraph() {
 
 function graficarSiluetaDesdeTabla(dataset, realHeightCm) {
     let graphCanvas = document.getElementById('siluetaCanvas');
+    const datasetTable = document.getElementById('datasetTable');
     
-    // Crear canvas dinámicamente si no existe en el DOM
     if (!graphCanvas) {
         graphCanvas = document.createElement('canvas');
         graphCanvas.id = 'siluetaCanvas';
-        graphCanvas.width = 320;
-        graphCanvas.height = 380;
+        graphCanvas.width = 300;
+        graphCanvas.height = 350;
         graphCanvas.style.display = 'block';
         graphCanvas.style.margin = '20px auto';
-        graphCanvas.style.background = '#181818';
+        graphCanvas.style.background = '#121212';
         graphCanvas.style.borderRadius = '8px';
         graphCanvas.style.border = '1px solid #333';
         
-        const resultsCard = document.getElementById('resultsCard');
-        resultsCard.appendChild(graphCanvas);
+        // Insertar justo debajo de la tabla
+        if (datasetTable && datasetTable.parentNode) {
+            datasetTable.parentNode.insertBefore(graphCanvas, datasetTable.nextSibling);
+        } else {
+            document.getElementById('resultsCard').appendChild(graphCanvas);
+        }
     }
 
     const gCtx = graphCanvas.getContext('2d');
     gCtx.clearRect(0, 0, graphCanvas.width, graphCanvas.height);
 
-    const padding = 35;
+    const padding = 30;
     const drawWidth = graphCanvas.width - (padding * 2);
     const drawHeight = graphCanvas.height - (padding * 2);
     const centerX = graphCanvas.width / 2;
 
-    // Obtener radio máximo para la escala horizontal
     let maxR = 0;
     for (let i = 0; i < dataset.length; i++) {
         if (dataset[i].r > maxR) maxR = dataset[i].r;
     }
 
-    const scaleX = (drawWidth / 2) / (maxR * 1.15);
+    const scaleX = (drawWidth / 2) / (maxR * 1.2);
     const scaleY = drawHeight / realHeightCm;
 
-    // Eje de simetría axial
-    gCtx.strokeStyle = '#555';
+    // Eje vertical
+    gCtx.strokeStyle = '#444';
     gCtx.setLineDash([4, 4]);
     gCtx.beginPath();
-    gCtx.moveTo(centerX, padding / 2);
-    gCtx.lineTo(centerX, graphCanvas.height - (padding / 2));
+    gCtx.moveTo(centerX, 10);
+    gCtx.lineTo(centerX, graphCanvas.height - 10);
     gCtx.stroke();
     gCtx.setLineDash([]);
 
-    // 1. Trazar silueta rellena conectando los puntos (z_i, r_i)
+    // Trazar silueta simétrica
     gCtx.beginPath();
-    
-    // Perfil Derecho (Desde la base z=0 hasta la tapa)
     for (let i = 0; i < dataset.length; i++) {
         let x = centerX + (dataset[i].r * scaleX);
         let y = (graphCanvas.height - padding) - (dataset[i].z * scaleY);
@@ -320,7 +321,6 @@ function graficarSiluetaDesdeTabla(dataset, realHeightCm) {
         else gCtx.lineTo(x, y);
     }
     
-    // Perfil Izquierdo (Desde la tapa de regreso a la base)
     for (let i = dataset.length - 1; i >= 0; i--) {
         let x = centerX - (dataset[i].r * scaleX);
         let y = (graphCanvas.height - padding) - (dataset[i].z * scaleY);
@@ -328,22 +328,22 @@ function graficarSiluetaDesdeTabla(dataset, realHeightCm) {
     }
     
     gCtx.closePath();
-    gCtx.fillStyle = 'rgba(0, 230, 118, 0.15)';
+    gCtx.fillStyle = 'rgba(0, 230, 118, 0.2)';
     gCtx.fill();
     gCtx.strokeStyle = '#00e676';
     gCtx.lineWidth = 2;
     gCtx.stroke();
 
-    // 2. Dibujar nodos de discretización sobre la silueta
+    // Puntos del dataset
     gCtx.fillStyle = '#ff1744';
     for (let i = 0; i < dataset.length; i++) {
         let y = (graphCanvas.height - padding) - (dataset[i].z * scaleY);
-        let xRight = centerX + (dataset[i].r * scaleX);
-        let xLeft = centerX - (dataset[i].r * scaleX);
+        let xR = centerX + (dataset[i].r * scaleX);
+        let xL = centerX - (dataset[i].r * scaleX);
 
         gCtx.beginPath();
-        gCtx.arc(xRight, y, 3, 0, 2 * PI_MANUAL);
-        gCtx.arc(xLeft, y, 3, 0, 2 * PI_MANUAL);
+        gCtx.arc(xR, y, 3, 0, 2 * PI_MANUAL);
+        gCtx.arc(xL, y, 3, 0, 2 * PI_MANUAL);
         gCtx.fill();
     }
 }
@@ -407,7 +407,6 @@ btnCalculate.addEventListener('click', () => {
     }
 
     graphDataset = dataset;
-    redrawCanvas();
 
     let volumeCm3 = 0;
     for (let i = 0; i < dataset.length - 1; i++) {
@@ -427,7 +426,7 @@ btnCalculate.addEventListener('click', () => {
     const vObjetivo = 250.0;
     const secanteRes = metodoSecante(vObjetivo, maxRadiusCm, realHeightCm);
 
-    // Renderizar Resultados
+    // 3. Renderizar Resultados en el DOM
     document.getElementById('volResult').textContent = volumeCm3.toFixed(2);
     document.getElementById('pointsCount').textContent = dataset.length;
 
@@ -436,6 +435,7 @@ btnCalculate.addEventListener('click', () => {
         secanteEl.textContent = `Altura para ${vObjetivo} mL: ${secanteRes.alturaLlenadoCm.toFixed(2)} cm (Iteraciones: ${secanteRes.iteraciones})`;
     }
 
+    // Poblar la tabla HTML
     const tbody = document.querySelector('#datasetTable tbody');
     tbody.innerHTML = '';
     for (let i = 0; i < dataset.length; i++) {
@@ -448,8 +448,10 @@ btnCalculate.addEventListener('click', () => {
         tbody.innerHTML += row;
     }
 
+    // Mostrar el contenedor de resultados
     document.getElementById('resultsCard').style.display = 'block';
 
-    // Generar la gráfica de la silueta simétrica con el dataset obtenido
+    // Redibujar la foto con las líneas verdes y generar el gráfico de silueta
+    redrawCanvas();
     graficarSiluetaDesdeTabla(dataset, realHeightCm);
 });
