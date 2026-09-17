@@ -7,154 +7,223 @@ const btnStartCamera = document.getElementById('btnStartCamera');
 const btnCapture = document.getElementById('btnCapture');
 const btnReset = document.getElementById('btnReset');
 const btnCalculate = document.getElementById('btnCalculate');
+
+// Inputs Dinámicos de Calibración
 const realHeightInput = document.getElementById('realHeight');
+const targetVolumeInput = document.getElementById('targetVolume'); // Debe existir en el HTML
 
 let stream = null;
 let calibrationPoints = [];
 let imageCaptured = false;
 let capturedImageObj = null;
-let graphDataset = [];
-let graphScale = null;
 
-// Constante Pi manual
-const PI_MANUAL = 3.141592653589793;
+const PI = Math.PI;
 
 // -------------------------------------------------------------
-// FUNCIONES MATEMÁTICAS MANUALES
+// 1. VISIÓN ARTIFICIAL: Detección Adaptativa según el Envase
 // -------------------------------------------------------------
 
-function elevarAlCuadrado(base) {
-    return base * base;
-}
+function extraerPerfilRealDeImagen(topPt, bottomPt, realHeightCm, maxRadiusPt) {
+    const n = 30; // 30 nodos para adaptarse a cualquier curvatura
+    const dyPixel = (bottomPt.y - topPt.y) / n;
+    const cmPerPixel = realHeightCm / Math.abs(bottomPt.y - topPt.y);
+    const centerXPixel = (topPt.x + bottomPt.x) / 2;
+    const maxRadiusCm = Math.abs(maxRadiusPt.x - centerXPixel) * cmPerPixel;
 
-function valorAbsoluto(numero) {
-    return numero < 0 ? -numero : numero;
-}
+    let rawNodes = [];
 
-// -------------------------------------------------------------
-// VISIÓN ARTIFICIAL: AJUSTE MAGNÉTICO AL BORDE REAL
-// -------------------------------------------------------------
-
-function snapToRealEdge(xClick, yClick) {
-    const searchRange = 12; // Rango de búsqueda en píxeles
-    let startX = Math.max(0, Math.floor(xClick - searchRange));
-    let width = searchRange * 2;
-    
-    let imgData;
-    try {
-        imgData = ctx.getImageData(startX, Math.floor(yClick), width, 1).data;
-    } catch (e) {
-        return xClick; // Retorno de seguridad
-    }
-
-    let maxGradient = 0;
-    let bestX = xClick;
-
-    for (let i = 0; i < imgData.length - 8; i += 4) {
-        let brightnessCurrent = (imgData[i] + imgData[i + 1] + imgData[i + 2]) / 3;
-        let brightnessNext = (imgData[i + 4] + imgData[i + 5] + imgData[i + 6]) / 3;
-        let gradient = valorAbsoluto(brightnessNext - brightnessCurrent);
-
-        if (gradient > maxGradient) {
-            maxGradient = gradient;
-            let offset = (i / 4) - searchRange;
-            bestX = xClick + offset;
-        }
-    }
-
-    return maxGradient > 15 ? bestX : xClick;
-}
-
-// -------------------------------------------------------------
-// BÚSQUEDA DE RAÍCES: MÉTODO DE LA SECANTE
-// Resuelve f(h) = V(h) - V_objetivo = 0
-// -------------------------------------------------------------
-
-function calcularVolumenHastaAltura(hEval, maxRadiusCm, realHeightCm) {
-    const n = 20;
-    const dz = hEval / n;
-    let vParcial = 0;
-
-    for (let i = 0; i < n; i++) {
-        let z0 = i * dz;
-        let z1 = (i + 1) * dz;
+    for (let i = 0; i <= n; i++) {
+        let currentY = bottomPt.y - (i * dyPixel);
+        let z_i = i * (realHeightCm / n);
         
-        let p0 = z0 / realHeightCm;
-        let p1 = z1 / realHeightCm;
+        let searchWidth = Math.floor(Math.abs(maxRadiusPt.x - centerXPixel) * 1.3);
+        let detectedRadiusPx = Math.abs(maxRadiusPt.x - centerXPixel);
 
-        let r0 = obtenerRadioGeometrico(p0, maxRadiusCm);
-        let r1 = obtenerRadioGeometrico(p1, maxRadiusCm);
+        try {
+            let imgDataRight = ctx.getImageData(Math.floor(centerXPixel), Math.floor(currentY), searchWidth, 1).data;
+            let maxGrad = 0;
+            let bestOffset = detectedRadiusPx;
 
-        let radioCuadradoPromedio = (elevarAlCuadrado(r0) + elevarAlCuadrado(r1)) / 2;
-        vParcial += PI_MANUAL * radioCuadradoPromedio * dz;
+            for (let px = 4; px < imgDataRight.length - 8; px += 4) {
+                let b1 = (imgDataRight[px] + imgDataRight[px+1] + imgDataRight[px+2]) / 3;
+                let b2 = (imgDataRight[px+4] + imgDataRight[px+5] + imgDataRight[px+6]) / 3;
+                let grad = Math.abs(b2 - b1);
+
+                if (grad > maxGrad) {
+                    maxGrad = grad;
+                    bestOffset = px / 4;
+                }
+            }
+
+            if (maxGrad > 10) detectedRadiusPx = bestOffset;
+        } catch (e) {}
+
+        let r_i = detectedRadiusPx * cmPerPixel;
+        if (r_i > maxRadiusCm * 1.08) r_i = maxRadiusCm;
+        if (r_i < maxRadiusCm * 0.15) r_i = maxRadiusCm * 0.15;
+
+        rawNodes.push({ z: z_i, r: r_i });
     }
-    return vParcial;
+
+    return { rawNodes };
 }
 
-function obtenerRadioGeometrico(p, maxRadiusCm) {
-    if (p <= 0.12) {
-        // Base: curva suave de entrada desde el fondo
-        return maxRadiusCm * (0.85 + 0.15 * Math.sin((p / 0.12) * (Math.PI / 2)));
-    } 
-    else if (p > 0.12 && p <= 0.55) {
-        // Cuerpo: cintura cóncava de agarre
-        let pCuerpo = (p - 0.12) / 0.43;
-        return maxRadiusCm * (1 - 0.10 * Math.sin(pCuerpo * Math.PI));
-    } 
-    else if (p > 0.55 && p <= 0.85) {
-        // Cuello: reducción parabólica
-        let pCuello = (p - 0.55) / 0.30;
-        let factorReduccion = 0.55;
-        return maxRadiusCm * (1 - factorReduccion * Math.pow(pCuello, 1.8));
-    } 
-    else {
-        // Boquilla y Tapa
-        return maxRadiusCm * 0.45;
+// -------------------------------------------------------------
+// 2. INTERPOLACIÓN: Spline Cúbico Adaptativo
+// -------------------------------------------------------------
+
+function calcularSplineCubico(nodes) {
+    const n = nodes.length - 1;
+    let a = nodes.map(p => p.r);
+    let h = [];
+    for (let i = 0; i < n; i++) h[i] = nodes[i + 1].z - nodes[i].z;
+
+    let alpha = [0];
+    for (let i = 1; i < n; i++) {
+        alpha[i] = (3 / h[i]) * (a[i + 1] - a[i]) - (3 / h[i - 1]) * (a[i] - a[i - 1]);
     }
+
+    let l = [1], mu = [0], z = [0];
+    for (let i = 1; i < n; i++) {
+        l[i] = 2 * (nodes[i + 1].z - nodes[i - 1].z) - h[i - 1] * mu[i - 1];
+        mu[i] = h[i] / l[i];
+        z[i] = (alpha[i] - h[i - 1] * z[i - 1]) / l[i];
+    }
+
+    l[n] = 1; z[n] = 0;
+    let c = new Array(n + 1).fill(0);
+    let b = new Array(n).fill(0);
+    let d = new Array(n).fill(0);
+
+    for (let j = n - 1; j >= 0; j--) {
+        c[j] = z[j] - mu[j] * c[j + 1];
+        b[j] = (a[j + 1] - a[j]) / h[j] - h[j] * (c[j + 1] + 2 * c[j]) / 3;
+        d[j] = (c[j + 1] - c[j]) / (3 * h[j]);
+    }
+
+    return function(zEval) {
+        if (zEval <= nodes[0].z) return nodes[0].r;
+        if (zEval >= nodes[n].z) return nodes[n].r;
+        let i = nodes.findIndex((pt, idx) => idx < n && zEval >= pt.z && zEval <= nodes[idx + 1].z);
+        if (i === -1) i = n - 1;
+        let dx = zEval - nodes[i].z;
+        return a[i] + b[i] * dx + c[i] * dx * dx + d[i] * dx * dx * dx;
+    };
 }
 
-function metodoSecante(vObjetivo, maxRadiusCm, realHeightCm) {
-    let h0 = realHeightCm * 0.4;
-    let h1 = realHeightCm * 0.9;
-    let tol = 0.001;
-    let maxIter = 50;
-    let iter = 0;
-    let hNext = h1;
+// -------------------------------------------------------------
+// 3. INTEGRACIÓN NUMÉRICA: Simpson 1/3
+// -------------------------------------------------------------
 
-    while (iter < maxIter) {
-        let f_h0 = calcularVolumenHastaAltura(h0, maxRadiusCm, realHeightCm) - vObjetivo;
-        let f_h1 = calcularVolumenHastaAltura(h1, maxRadiusCm, realHeightCm) - vObjetivo;
+function integrarSimpson(rFunc, zMin, zMax, numIntervalos = 80) {
+    if (zMin >= zMax) return 0;
+    if (numIntervalos % 2 !== 0) numIntervalos++;
+    const h = (zMax - zMin) / numIntervalos;
+    let suma = Math.pow(rFunc(zMin), 2) + Math.pow(rFunc(zMax), 2);
 
-        if (valorAbsoluto(f_h1 - f_h0) < 1e-7) break;
+    for (let i = 1; i < numIntervalos; i++) {
+        let z = zMin + i * h;
+        let r = rFunc(z);
+        let factor = (i % 2 === 0) ? 2 : 4;
+        suma += factor * Math.pow(r, 2);
+    }
 
-        // Fórmula de la Secante
-        hNext = h1 - (f_h1 * (h1 - h0)) / (f_h1 - f_h0);
+    return (PI * h / 3) * suma;
+}
 
-        if (valorAbsoluto(f_h1) < tol) break;
+function fObjetivo(h, vObjetivo, rFunc) {
+    return integrarSimpson(rFunc, 0, h) - vObjetivo;
+}
 
-        h0 = h1;
-        h1 = hNext;
+// -------------------------------------------------------------
+// 4. LOS 5 MÉTODOS NUMÉRICOS DE BÚSQUEDA DE RAÍCES
+// -------------------------------------------------------------
+
+function metodoBiseccion(vObjetivo, rFunc, maxH, tol = 1e-4, maxIter = 50) {
+    let a = 0, b = maxH, c = a, iter = 0;
+    while ((b - a) / 2 > tol && iter < maxIter) {
+        c = (a + b) / 2;
+        let fc = fObjetivo(c, vObjetivo, rFunc);
+        if (Math.abs(fc) < tol) break;
+        if (fObjetivo(a, vObjetivo, rFunc) * fc < 0) b = c; else a = c;
         iter++;
     }
+    return { altura: c, iter };
+}
 
-    return { alturaLlenadoCm: hNext, iteraciones: iter };
+function metodoFalsaPosicion(vObjetivo, rFunc, maxH, tol = 1e-4, maxIter = 50) {
+    let a = 0, b = maxH, c = a, iter = 0;
+    for (iter = 0; iter < maxIter; iter++) {
+        let fa = fObjetivo(a, vObjetivo, rFunc);
+        let fb = fObjetivo(b, vObjetivo, rFunc);
+        if (Math.abs(fb - fa) < 1e-6) break;
+        c = b - (fb * (b - a)) / (fb - fa);
+        let fc = fObjetivo(c, vObjetivo, rFunc);
+        if (Math.abs(fc) < tol) break;
+        if (fa * fc < 0) b = c; else a = c;
+    }
+    return { altura: c, iter };
+}
+
+function metodoPuntoFijo(vObjetivo, rFunc, maxH, tol = 1e-4, maxIter = 50) {
+    let h = maxH * 0.5, iter = 0;
+    let rProm = rFunc(maxH * 0.5);
+    let K = PI * rProm * rProm;
+    if (K === 0) K = 1;
+
+    while (iter < maxIter) {
+        let fh = fObjetivo(h, vObjetivo, rFunc);
+        if (Math.abs(fh) < tol) break;
+        let hNext = h - fh / K;
+        if (Math.abs(hNext - h) < tol) break;
+        h = hNext;
+        iter++;
+    }
+    return { altura: Math.min(Math.max(h, 0), maxH), iter };
+}
+
+function metodoNewtonRaphson(vObjetivo, rFunc, maxH, tol = 1e-4, maxIter = 50) {
+    let h = maxH * 0.5, iter = 0;
+    while (iter < maxIter) {
+        let fh = fObjetivo(h, vObjetivo, rFunc);
+        if (Math.abs(fh) < tol) break;
+        let r_h = rFunc(h);
+        let dfh = PI * r_h * r_h; // Derivada dV/dh = A(h)
+        if (Math.abs(dfh) < 1e-6) break;
+        let hNext = h - fh / dfh;
+        if (Math.abs(hNext - h) < tol) break;
+        h = hNext;
+        iter++;
+    }
+    return { altura: Math.min(Math.max(h, 0), maxH), iter };
+}
+
+function metodoSecante(vObjetivo, rFunc, maxH, tol = 1e-4, maxIter = 50) {
+    let h0 = maxH * 0.3, h1 = maxH * 0.8, iter = 0, hNext = h1;
+    while (iter < maxIter) {
+        let f_h0 = fObjetivo(h0, vObjetivo, rFunc);
+        let f_h1 = fObjetivo(h1, vObjetivo, rFunc);
+        if (Math.abs(f_h1 - f_h0) < 1e-6) break;
+        hNext = h1 - (f_h1 * (h1 - h0)) / (f_h1 - f_h0);
+        if (Math.abs(f_h1) < tol) break;
+        h0 = h1; h1 = hNext; iter++;
+    }
+    return { altura: Math.min(Math.max(hNext, 0), maxH), iter };
 }
 
 // -------------------------------------------------------------
-// CONTROL DE CÁMARA Y CAPTURA
+// 5. CONTROL DE CÁMARA Y EVENTOS
 // -------------------------------------------------------------
 
 btnStartCamera.addEventListener('click', async () => {
     try {
-        stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: 'environment' } 
-        });
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
         video.srcObject = stream;
         video.style.display = 'block';
         canvas.style.display = 'none';
         btnCapture.disabled = false;
     } catch (err) {
-        alert('Error al acceder a la cámara: Asegúrate de dar permisos o usar HTTPS/localhost.');
+        alert('Error al acceder a la cámara.');
     }
 });
 
@@ -162,30 +231,17 @@ btnCapture.addEventListener('click', () => {
     canvas.width = video.videoWidth || 640;
     canvas.height = video.videoHeight || 480;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    
-    if (stream) {
-        let tracks = stream.getTracks();
-        for (let i = 0; i < tracks.length; i++) {
-            tracks[i].stop();
-        }
-    }
-    
+    if (stream) stream.getTracks().forEach(track => track.stop());
     video.style.display = 'none';
     canvas.style.display = 'block';
     btnCapture.disabled = true;
     imageCaptured = true;
-    
     capturedImageObj = new Image();
     capturedImageObj.src = canvas.toDataURL('image/png');
 });
 
-// -------------------------------------------------------------
-// CAPTURA DE 3 CLICS CON AJUSTE AUTOMÁTICO
-// -------------------------------------------------------------
-
 canvas.addEventListener('click', (e) => {
     if (!imageCaptured) return;
-
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
@@ -193,40 +249,29 @@ canvas.addEventListener('click', (e) => {
     let x = (e.clientX - rect.left) * scaleX;
     let y = (e.clientY - rect.top) * scaleY;
 
-    if (calibrationPoints.length === 2) {
-        x = snapToRealEdge(x, y);
-    }
-
     if (calibrationPoints.length < 3) {
-        calibrationPoints[calibrationPoints.length] = { x: x, y: y };
+        calibrationPoints.push({ x, y });
         redrawCanvas();
-
-        if (calibrationPoints.length === 3) {
-            btnCalculate.disabled = false;
-        }
+        if (calibrationPoints.length === 3) btnCalculate.disabled = false;
     }
 });
 
 function redrawCanvas() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (capturedImageObj) {
-        ctx.drawImage(capturedImageObj, 0, 0);
-    }
+    if (capturedImageObj) ctx.drawImage(capturedImageObj, 0, 0);
 
     const labels = ["Tapa", "Base", "Borde Max"];
     const colors = ["#007bff", "#007bff", "#ff1744"];
 
-    for (let i = 0; i < calibrationPoints.length; i++) {
-        let pt = calibrationPoints[i];
+    calibrationPoints.forEach((pt, i) => {
         ctx.fillStyle = colors[i];
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 7, 0, 2 * PI_MANUAL);
+        ctx.arc(pt.x, pt.y, 7, 0, 2 * PI);
         ctx.fill();
-
         ctx.fillStyle = "white";
         ctx.font = "bold 13px sans-serif";
         ctx.fillText(labels[i], pt.x + 10, pt.y + 4);
-    }
+    });
 
     if (calibrationPoints.length >= 2) {
         ctx.strokeStyle = 'rgba(0, 123, 255, 0.7)';
@@ -236,55 +281,79 @@ function redrawCanvas() {
         ctx.lineTo(calibrationPoints[1].x, calibrationPoints[1].y);
         ctx.stroke();
     }
-
-    drawDatasetGraph();
-}
-
-function drawDatasetGraph() {
-    if (graphDataset.length === 0 || !graphScale) return;
-
-    const { centerXPixel, bottomY, pixelHeight, cmPerPixel, realHeightCm } = graphScale;
-    const rightProfile = [];
-    const leftProfile = [];
-
-    for (let i = 0; i < graphDataset.length; i++) {
-        const data = graphDataset[i];
-        const y = bottomY - (data.z / realHeightCm) * pixelHeight;
-        const radiusPixels = data.r / cmPerPixel;
-
-        rightProfile[rightProfile.length] = { x: centerXPixel + radiusPixels, y: y };
-        leftProfile[leftProfile.length] = { x: centerXPixel - radiusPixels, y: y };
-    }
-
-    ctx.save();
-    ctx.strokeStyle = '#00e676';
-    ctx.fillStyle = '#00e676';
-    ctx.lineWidth = 3;
-    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
-    ctx.shadowBlur = 4;
-
-    for (let side = 0; side < 2; side++) {
-        const profile = side === 0 ? rightProfile : leftProfile;
-        ctx.beginPath();
-        for (let i = 0; i < profile.length; i++) {
-            if (i === 0) ctx.moveTo(profile[i].x, profile[i].y);
-            else ctx.lineTo(profile[i].x, profile[i].y);
-        }
-        ctx.stroke();
-
-        for (let i = 0; i < profile.length; i++) {
-            ctx.beginPath();
-            ctx.arc(profile[i].x, profile[i].y, 4, 0, 2 * PI_MANUAL);
-            ctx.fill();
-        }
-    }
-
-    ctx.restore();
 }
 
 // -------------------------------------------------------------
-// GRAFICAR SILUETA EN UN CANVAS DEDICADO A PARTIR DE LA TABLA
+// EXECUCIÓN DINÁMICA DE RESULTADOS
 // -------------------------------------------------------------
+
+btnCalculate.addEventListener('click', () => {
+    if (calibrationPoints.length < 3) return;
+
+    // Lectura de los valores reales ingresados
+    const realHeightCm = parseFloat(realHeightInput.value) || 15.0;
+    const vObjetivo = (targetVolumeInput && targetVolumeInput.value) ? parseFloat(targetVolumeInput.value) : 250.0;
+
+    const topPt = calibrationPoints[0];
+    const bottomPt = calibrationPoints[1];
+    const maxRadiusPt = calibrationPoints[2];
+
+    // 1. Detección visual adaptativa
+    const { rawNodes } = extraerPerfilRealDeImagen(topPt, bottomPt, realHeightCm, maxRadiusPt);
+
+    // 2. Interpolación Spline
+    const rSpline = calcularSplineCubico(rawNodes);
+
+    const totalPuntos = 60;
+    let dataset = [];
+    for (let i = 0; i <= totalPuntos; i++) {
+        let z = i * (realHeightCm / totalPuntos);
+        let r = rSpline(z);
+        dataset.push({ z, r });
+    }
+
+    // 3. Volumen total por Simpson
+    const volumeCm3 = integrarSimpson(rSpline, 0, realHeightCm, 80);
+
+    // Validación de seguridad si el objetivo supera la capacidad
+    let vObjReal = vObjetivo;
+    if (vObjetivo > volumeCm3) {
+        vObjReal = volumeCm3 * 0.8; // Ajustar automáticamente si se pasa de la capacidad total
+    }
+
+    // 4. Ejecución de Métodos de Raíces
+    const resBiseccion = metodoBiseccion(vObjReal, rSpline, realHeightCm);
+    const resFalsaPos = metodoFalsaPosicion(vObjReal, rSpline, realHeightCm);
+    const resPuntoFijo = metodoPuntoFijo(vObjReal, rSpline, realHeightCm);
+    const resNewton = metodoNewtonRaphson(vObjReal, rSpline, realHeightCm);
+    const resSecante = metodoSecante(vObjReal, rSpline, realHeightCm);
+
+    // Renderizar en UI
+    document.getElementById('volResult').textContent = volumeCm3.toFixed(2);
+    document.getElementById('pointsCount').textContent = dataset.length;
+
+    const secanteEl = document.getElementById('secanteResult');
+    if (secanteEl) {
+        secanteEl.innerHTML = `
+            <b>Resultados para Volumen Objetivo = ${vObjReal.toFixed(1)} mL:</b><br>
+            • Bisección: ${resBiseccion.altura.toFixed(2)} cm (${resBiseccion.iter} iter)<br>
+            • Falsa Posición: ${resFalsaPos.altura.toFixed(2)} cm (${resFalsaPos.iter} iter)<br>
+            • Punto Fijo: ${resPuntoFijo.altura.toFixed(2)} cm (${resPuntoFijo.iter} iter)<br>
+            • Newton-Raphson: ${resNewton.altura.toFixed(2)} cm (${resNewton.iter} iter)<br>
+            • Secante: ${resSecante.altura.toFixed(2)} cm (${resSecante.iter} iter)
+        `;
+    }
+
+    const tbody = document.querySelector('#datasetTable tbody');
+    tbody.innerHTML = '';
+    dataset.forEach((data, i) => {
+        tbody.innerHTML += `<tr><td>${i + 1}</td><td>${data.z.toFixed(2)}</td><td>${data.r.toFixed(2)}</td></tr>`;
+    });
+
+    document.getElementById('resultsCard').style.display = 'block';
+
+    graficarSiluetaDesdeTabla(dataset, realHeightCm);
+});
 
 function graficarSiluetaDesdeTabla(dataset, realHeightCm) {
     let graphCanvas = document.getElementById('siluetaCanvas');
@@ -300,12 +369,7 @@ function graficarSiluetaDesdeTabla(dataset, realHeightCm) {
         graphCanvas.style.background = '#121212';
         graphCanvas.style.borderRadius = '8px';
         graphCanvas.style.border = '1px solid #333';
-        
-        if (datasetTable && datasetTable.parentNode) {
-            datasetTable.parentNode.insertBefore(graphCanvas, datasetTable.nextSibling);
-        } else {
-            document.getElementById('resultsCard').appendChild(graphCanvas);
-        }
+        datasetTable.parentNode.insertBefore(graphCanvas, datasetTable.nextSibling);
     }
 
     const gCtx = graphCanvas.getContext('2d');
@@ -316,16 +380,11 @@ function graficarSiluetaDesdeTabla(dataset, realHeightCm) {
     const drawHeight = graphCanvas.height - (padding * 2);
     const centerX = graphCanvas.width / 2;
 
-    let maxR = 0;
-    for (let i = 0; i < dataset.length; i++) {
-        if (dataset[i].r > maxR) maxR = dataset[i].r;
-    }
-
-    const scaleX = (drawWidth / 2) / (maxR * 1.2);
+    let maxR = Math.max(...dataset.map(d => d.r));
+    const scaleX = (drawWidth / 2) / (maxR * 1.15);
     const scaleY = drawHeight / realHeightCm;
 
-    // Eje vertical
-    gCtx.strokeStyle = '#444';
+    gCtx.strokeStyle = '#555';
     gCtx.setLineDash([4, 4]);
     gCtx.beginPath();
     gCtx.moveTo(centerX, 10);
@@ -333,140 +392,31 @@ function graficarSiluetaDesdeTabla(dataset, realHeightCm) {
     gCtx.stroke();
     gCtx.setLineDash([]);
 
-    // Trazar silueta simétrica
     gCtx.beginPath();
-    for (let i = 0; i < dataset.length; i++) {
-        let x = centerX + (dataset[i].r * scaleX);
-        let y = (graphCanvas.height - padding) - (dataset[i].z * scaleY);
-        if (i === 0) gCtx.moveTo(x, y);
-        else gCtx.lineTo(x, y);
-    }
-    
+    dataset.forEach((pt, i) => {
+        let x = centerX + (pt.r * scaleX);
+        let y = (graphCanvas.height - padding) - (pt.z * scaleY);
+        if (i === 0) gCtx.moveTo(x, y); else gCtx.lineTo(x, y);
+    });
     for (let i = dataset.length - 1; i >= 0; i--) {
         let x = centerX - (dataset[i].r * scaleX);
         let y = (graphCanvas.height - padding) - (dataset[i].z * scaleY);
         gCtx.lineTo(x, y);
     }
-    
     gCtx.closePath();
+
     gCtx.fillStyle = 'rgba(0, 230, 118, 0.2)';
     gCtx.fill();
     gCtx.strokeStyle = '#00e676';
     gCtx.lineWidth = 2;
     gCtx.stroke();
-
-    // Puntos del dataset
-    gCtx.fillStyle = '#ff1744';
-    for (let i = 0; i < dataset.length; i++) {
-        let y = (graphCanvas.height - padding) - (dataset[i].z * scaleY);
-        let xR = centerX + (dataset[i].r * scaleX);
-        let xL = centerX - (dataset[i].r * scaleX);
-
-        gCtx.beginPath();
-        gCtx.arc(xR, y, 3, 0, 2 * PI_MANUAL);
-        gCtx.arc(xL, y, 3, 0, 2 * PI_MANUAL);
-        gCtx.fill();
-    }
 }
 
 btnReset.addEventListener('click', () => {
     calibrationPoints = [];
-    graphDataset = [];
-    graphScale = null;
     btnCalculate.disabled = true;
     document.getElementById('resultsCard').style.display = 'none';
-    
     const siluetaCanvas = document.getElementById('siluetaCanvas');
     if (siluetaCanvas) siluetaCanvas.remove();
-    
     redrawCanvas();
-});
-
-// -------------------------------------------------------------
-// MOTOR DE CÁLCULO NUMÉRICO
-// -------------------------------------------------------------
-
-btnCalculate.addEventListener('click', () => {
-    if (calibrationPoints.length < 3) return;
-
-    const realHeightCm = parseFloat(realHeightInput.value) || 15.0;
-
-    const topPt = calibrationPoints[0];
-    const bottomPt = calibrationPoints[1];
-    const maxRadiusPt = calibrationPoints[2];
-
-    const pixelHeight = valorAbsoluto(bottomPt.y - topPt.y);
-    const cmPerPixel = realHeightCm / pixelHeight;
-
-    const centerXPixel = (topPt.x + bottomPt.x) / 2;
-    const maxRadiusCm = valorAbsoluto(maxRadiusPt.x - centerXPixel) * cmPerPixel;
-
-    graphScale = {
-        centerXPixel: centerXPixel,
-        bottomY: bottomPt.y,
-        pixelHeight: pixelHeight,
-        cmPerPixel: cmPerPixel,
-        realHeightCm: realHeightCm
-    };
-
-    // 1. Discretización con 20 nodos y función por tramos
-    const n = 20;
-    const dz = realHeightCm / n;
-    let dataset = [];
-
-    for (let i = 0; i <= n; i++) {
-        let z_i = i * dz;
-        let porcentajeAltura = z_i / realHeightCm;
-        let r_i = obtenerRadioGeometrico(porcentajeAltura, maxRadiusCm);
-
-        dataset[dataset.length] = { z: z_i, r: r_i };
-    }
-
-    graphDataset = dataset;
-
-    // 2. Integración Numérica por Regla del Trapecio
-    let volumeCm3 = 0;
-    for (let i = 0; i < dataset.length - 1; i++) {
-        let z0 = dataset[i].z;
-        let z1 = dataset[i + 1].z;
-        let r0 = dataset[i].r;
-        let r1 = dataset[i + 1].r;
-
-        let deltaZ = z1 - z0;
-        let radioCuadradoPromedio = (elevarAlCuadrado(r0) + elevarAlCuadrado(r1)) / 2;
-        let volumenSegmento = PI_MANUAL * radioCuadradoPromedio * deltaZ;
-
-        volumeCm3 += volumenSegmento;
-    }
-
-    // 3. Búsqueda de Raíces por Método de la Secante
-    const vObjetivo = 250.0;
-    const secanteRes = metodoSecante(vObjetivo, maxRadiusCm, realHeightCm);
-
-    // Renderizar Resultados en el DOM
-    document.getElementById('volResult').textContent = volumeCm3.toFixed(2);
-    document.getElementById('pointsCount').textContent = dataset.length;
-
-    const secanteEl = document.getElementById('secanteResult');
-    if (secanteEl) {
-        secanteEl.textContent = `Altura para ${vObjetivo} mL: ${secanteRes.alturaLlenadoCm.toFixed(2)} cm (Iteraciones: ${secanteRes.iteraciones})`;
-    }
-
-    // Poblar la tabla HTML
-    const tbody = document.querySelector('#datasetTable tbody');
-    tbody.innerHTML = '';
-    for (let i = 0; i < dataset.length; i++) {
-        let data = dataset[i];
-        let row = '<tr>' +
-            '<td>' + (i + 1) + '</td>' +
-            '<td>' + data.z.toFixed(2) + '</td>' +
-            '<td>' + data.r.toFixed(2) + '</td>' +
-        '</tr>';
-        tbody.innerHTML += row;
-    }
-
-    document.getElementById('resultsCard').style.display = 'block';
-
-    redrawCanvas();
-    graficarSiluetaDesdeTabla(dataset, realHeightCm);
 });
